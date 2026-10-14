@@ -1,0 +1,166 @@
+// Level 3 for the host-chain side. Both host containers use the same component roles,
+// so the EVM / Solana difference is visible inside each role rather than as two shapes:
+//   Admin & pause · Input attestation · Symbolic execution · Compute metering ·
+//   ACL & grants · Decryption authorization · KMS result verification · Events for off-chain
+// EVM adds Cross-chain bridge; Solana adds two build-variant components (#feature).
+
+model {
+
+  // ======================================================================
+  extend zama.evmHost {
+    admin = component 'Admin & pause' {
+      description 'PauserSet (immutable/), ACLOwnable, UUPS empty-proxy upgrade pattern (shared/)'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/immutable/PauserSet.sol 'GitHub: fhevm/host-contracts/contracts/immutable/PauserSet.sol'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/shared/ACLOwnable.sol 'GitHub: fhevm/host-contracts/contracts/shared/ACLOwnable.sol'
+    }
+    input = component 'Input attestation' {
+      description 'InputVerifier: coprocessor signatures over user inputs'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/InputVerifier.sol 'GitHub: fhevm/host-contracts/contracts/InputVerifier.sol'
+    }
+    exec = component 'Symbolic execution' {
+      description 'FHEVMExecutor: type checks, handle derivation'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/FHEVMExecutor.sol 'GitHub: fhevm/host-contracts/contracts/FHEVMExecutor.sol'
+    }
+    metering = component 'Compute metering' {
+      description 'HCULimit: per-tx / per-block compute budget'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/HCULimit.sol 'GitHub: fhevm/host-contracts/contracts/HCULimit.sol'
+    }
+    acl = component 'ACL & grants' {
+      description 'ACL: persistent / transient grants, allowForDecryption'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/ACL.sol 'GitHub: fhevm/host-contracts/contracts/ACL.sol'
+    }
+    decryptAuth = component 'Decryption authorization' {
+      description 'ACL delegation (delegateAccount); the user signature itself is checked off-chain by the connector'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/ACL.sol 'GitHub: fhevm/host-contracts/contracts/ACL.sol'
+    }
+    kmsVerify = component 'KMS result verification' {
+      description 'KMSVerifier: threshold KMS signatures on decryption results, context / thresholds from ProtocolConfig'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/KMSVerifier.sol 'GitHub: fhevm/host-contracts/contracts/KMSVerifier.sol'
+    }
+    events = component 'Events for off-chain' {
+      description 'FHEEvents, ACLEvents: the symbolic-execution trace the host-listener ingests'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/FHEEvents.sol 'GitHub: fhevm/host-contracts/contracts/FHEEvents.sol'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/ACLEvents.sol 'GitHub: fhevm/host-contracts/contracts/ACLEvents.sol'
+    }
+    bridge = component 'Cross-chain bridge' {
+      description 'ConfidentialBridge over LayerZero: HandlesSender (send + ACL check), HandlesReceiver (_lzReceive + handle derivation); BridgeEvents'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/bridge/ConfidentialBridge.sol 'GitHub: fhevm/host-contracts/contracts/bridge/ConfidentialBridge.sol'
+    }
+
+    exec -> input 'checks attested inputs'
+    exec -> metering 'meters'
+    exec -> acl 'grants outputs'
+    exec -> events 'emits'
+    acl -> events 'emits'
+    bridge -> acl 'checks sender, grants bridged handle'
+  }
+
+  // ======================================================================
+  extend zama.solHost {
+    admin = component 'Admin & pause' {
+      description 'initialize_host_config, host_admin, set_*, pause / unpause; HostConfig, PauserRecord, DenyScopeRecord; close_owned_accounts is a preview-only wipe behind the admin-sweep feature (DD-051)'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/state/host_config.rs 'GitHub: fhevm/solana/programs/zama-host/src/state/host_config.rs'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/instructions/host_admin.rs 'GitHub: fhevm/solana/programs/zama-host/src/instructions/host_admin.rs'
+    }
+    input = component 'Input attestation' {
+      description 'input_verification.rs: threshold secp256k1_recover of coprocessor attestations over the EIP-712 digest (eip712.rs)'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/instructions/input_verification.rs 'GitHub: fhevm/solana/programs/zama-host/src/instructions/input_verification.rs'
+    }
+    exec = component 'Symbolic execution' {
+      description 'fhe_execute/: one atomic execution — preflight, walk, account table, type_gate, RandNonce; transient store open / close via instructions-sysvar introspection'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/instructions/fhe_execute 'GitHub: fhevm/solana/programs/zama-host/src/instructions/fhe_execute'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/instructions/transient.rs 'GitHub: fhevm/solana/programs/zama-host/src/instructions/transient.rs'
+    }
+    metering = component 'Compute metering' {
+      description 'hcu/ cost tables (EVM HCULimit numbers), block_cap.rs; HcuBlockMeter, HcuTrustedAppRecord'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/instructions/fhe_execute/hcu/mod.rs 'GitHub: fhevm/solana/programs/zama-host/src/instructions/fhe_execute/hcu/mod.rs'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/state/hcu_block_meter.rs 'GitHub: fhevm/solana/programs/zama-host/src/state/hcu_block_meter.rs'
+    }
+    acl = component 'ACL & grants' {
+      description 'EncryptedStore PDA per (program, authority, scope) with a per-value MMR of allow leaves (peaks, leaf_count); store_output.rs appends, make_store_handle_public seals; leaves replayable from instruction data, no events (DD-033)'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/state/encrypted_store.rs 'GitHub: fhevm/solana/programs/zama-host/src/state/encrypted_store.rs'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/instructions/fhe_execute/store_output.rs 'GitHub: fhevm/solana/programs/zama-host/src/instructions/fhe_execute/store_output.rs'
+    }
+    decryptAuth = component 'Decryption authorization' {
+      description 'delegate_for_user_decryption, revoke_delegation_for_user_decryption, revoke_permits; UserDecryptionDelegation, PermitInvalidation'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/state/user_decryption_delegation.rs 'GitHub: fhevm/solana/programs/zama-host/src/state/user_decryption_delegation.rs'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/state/permit_invalidation.rs 'GitHub: fhevm/solana/programs/zama-host/src/state/permit_invalidation.rs'
+    }
+    kmsVerify = component 'KMS result verification' {
+      description 'verify_public_decrypt.rs: stateless pull-oracle for one (handle, cleartext) pair against the KmsContext named in extra_data; define / destroy_kms_context'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/instructions/verify_public_decrypt.rs 'GitHub: fhevm/solana/programs/zama-host/src/instructions/verify_public_decrypt.rs'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/state/kms_context.rs 'GitHub: fhevm/solana/programs/zama-host/src/state/kms_context.rs'
+    }
+    events = component 'Events for off-chain' {
+      description 'events.rs, event_cpi.rs: FheExecutedEvent, HostConfigUpdatedEvent, NewKmsContextEvent, KmsContextDestroyedEvent, DenyScopeUpdatedEvent, PauserUpdatedEvent — emit_cpi only (DD-044, DD-037)'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/events.rs 'GitHub: fhevm/solana/programs/zama-host/src/events.rs'
+    }
+    codec = component 'Off-chain codec' {
+      #feature
+      description 'encode.rs, decode.rs; features encode / decode, never in the SBF binary; decode is what host-listener links'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/decode.rs 'GitHub: fhevm/solana/programs/zama-host/src/decode.rs'
+    }
+    cleartext = component 'Cleartext simulator' {
+      #feature
+      description 'cleartext/: the production host plus the plaintext of every handle kept in chain state, for tests without coprocessor or KMS'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/cleartext 'GitHub: fhevm/solana/programs/zama-host/src/cleartext'
+    }
+    aclLib = library 'zama-solana-acl' {
+      #shared
+      description 'MMR leaf / proof verification'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-acl 'GitHub: fhevm/solana/crates/zama-solana-acl'
+    }
+
+    exec -> input 'checks attested inputs'
+    exec -> metering 'meters'
+    exec -> acl 'appends allow leaves, writes slots'
+    exec -> events 'emits FheExecutedEvent'
+    admin -> events 'emits config / pauser / deny-scope events'
+    kmsVerify -> events 'emits context events'
+    acl -> aclLib 'hashes leaves, folds peaks'
+    decryptAuth -> admin 'checks pause flags'
+    input -> admin 'reads coprocessor signers, EIP-712 domain'
+    kmsVerify -> admin 'reads EIP-712 domain'
+  }
+
+  // ======================================================================
+  extend zama.evmApps {
+    fheLib = library 'library-solidity' {
+      description 'FHE.sol: euint* types and the calls into the host contracts'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/library-solidity 'GitHub: fhevm/library-solidity'
+    }
+  }
+
+  extend zama.confidentialToken {
+    fheLib = library 'zama-fhe' {
+      #shared
+      description 'App-facing builder for one fhe_execute invocation: ops, lowering, validation, cost preview, CPI invoke'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-fhe 'GitHub: fhevm/solana/crates/zama-fhe'
+    }
+    aclLib = library 'zama-solana-acl' {
+      #shared
+      description 'MMR leaf / proof verification'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-acl 'GitHub: fhevm/solana/crates/zama-solana-acl'
+    }
+    hostLib = library 'zama-host (cpi feature)' {
+      #shared
+      description 'The host program crate with no-entrypoint + cpi: account types and instruction builders'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host 'GitHub: fhevm/solana/programs/zama-host'
+    }
+    fheLib -> hostLib 'builds, invokes fhe_execute'
+  }
+
+  extend zama.solSpecimens {
+    fheLib = library 'zama-fhe' {
+      #shared
+      description 'Linked by encrypted-counter and dep-chain; delegator-vault and demo-vault call zama-host directly'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-fhe 'GitHub: fhevm/solana/crates/zama-fhe'
+    }
+    hostLib = library 'zama-host (cpi feature)' {
+      #shared
+      description 'Linked by every specimen'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host 'GitHub: fhevm/solana/programs/zama-host'
+    }
+    fheLib -> hostLib 'builds, invokes fhe_execute'
+  }
+}

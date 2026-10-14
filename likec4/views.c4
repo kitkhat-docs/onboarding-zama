@@ -1,0 +1,151 @@
+// Views. Each level view is a zoom into exactly one element of the level above.
+// Cross-cut and Flow views are named as such and do not form a level.
+
+views {
+
+  // ---- Context (C4 level 1) ------------------------------------------------
+  view index {
+    title 'Context · Zama Protocol'
+    description 'The protocol as a black box: who uses it, which chains and stores it depends on'
+    include *
+    // Edges aggregated from several container relationships would render as "[...]";
+    // give them one action title here.
+    include gov -> zama with { title 'configures the protocol, registers participants' }
+    include ops -> zama with { title 'operates coprocessor nodes and KMS parties' }
+    include zama -> keyStore with { title 'publishes and downloads server keys' }
+    autoLayout TopBottom
+  }
+
+  // ---- Containers (C4 level 2) ---------------------------------------------
+  view containers of zama {
+    title 'Containers · Zama Protocol'
+    description 'Every deployable unit and the trust decision it owns; dashed edges are reads, solid are calls. Groups here are visual only, not trust or deployment boundaries.'
+    // Edge crossings measured with the scratch counter (bezier-flattened, likec4 export json):
+    // plain `include *` = 73; dropping the three chain externals (the green on-chain containers
+    // already name their chain) = 27; these groups + only the two actors that drive flows = 12.
+    // Governance and operator stay in the Context view.
+    include user, dev, zama.sdk
+    group 'Host chains and dApps' { include zama.evmHost, zama.solHost, zama.evmApps, zama.confidentialToken, zama.solSpecimens }
+    include zama.relayer
+    group 'Gateway & protocol' { include zama.gateway, zama.protocolContracts }
+    include zama.coprocessor
+    group 'KMS party' { include zama.kmsConnector, zama.kmsCore }
+    include keyStore
+    autoLayout LeftRight 100 40
+  }
+
+  // ---- Components (C4 level 3), one per container that has components -----
+  view evmHost of zama.evmHost {
+    title 'Components · Host contracts (EVM)'
+    include *
+    autoLayout TopBottom
+  }
+  view solHost of zama.solHost {
+    title 'Components · zama-host program (Solana)'
+    include *
+    autoLayout TopBottom
+  }
+  view evmApps of zama.evmApps {
+    title 'Components · dApp contracts (EVM)'
+    include *
+    autoLayout TopBottom
+  }
+  view confidentialToken of zama.confidentialToken {
+    title 'Components · confidential-token (Solana)'
+    include *
+    autoLayout TopBottom
+  }
+  view solSpecimens of zama.solSpecimens {
+    title 'Components · Specimen programs (Solana)'
+    include *
+    autoLayout TopBottom
+  }
+  view sdk of zama.sdk {
+    title 'Components · JS SDK'
+    include *
+    autoLayout LeftRight
+  }
+  view relayer of zama.relayer {
+    title 'Components · Relayer'
+    include *
+    autoLayout LeftRight
+  }
+  view coprocessor of zama.coprocessor {
+    title 'Components · Coprocessor'
+    include *
+    autoLayout LeftRight
+  }
+  view kmsConnector of zama.kmsConnector {
+    title 'Components · KMS connector'
+    include *
+    autoLayout LeftRight
+  }
+  view gateway of zama.gateway {
+    title 'Components · Gateway contracts'
+    include *
+    autoLayout TopBottom
+  }
+  view protocolContracts of zama.protocolContracts {
+    title 'Components · Protocol contracts (Ethereum)'
+    include *
+    autoLayout TopBottom
+  }
+
+  // ---- Cross-cuts (not a level) ----------------------------------------------
+  view sharedCode {
+    title 'Cross-cut · Shared code'
+    description 'Libraries tagged #shared inside every container that links them: verification runs the same compiled code on-chain, in the connector, in the relayer and in the coprocessor'
+    include zama.solHost, zama.confidentialToken, zama.solSpecimens, zama.relayer, zama.kmsConnector, zama.coprocessor
+    include zama.** where tag is #shared
+    // TopBottom puts the consumer containers side by side; LeftRight stacks them into a 2.8k px column
+    autoLayout TopBottom 80 40
+  }
+  view hostRoles {
+    title 'Cross-cut · Host-chain roles, EVM vs Solana'
+    description 'The same component roles in both host containers; read the descriptions for how each chain fills a role'
+    include zama.evmHost, zama.solHost
+    include zama.evmHost.*, zama.solHost.*
+    exclude zama.** where tag is #feature
+    exclude zama.** where kind is library
+    // TopBottom renders EVM and Solana next to each other, which is the point of the view
+    autoLayout TopBottom 80 40
+  }
+
+  // ---- Flows (dynamic, container level) --------------------------------------
+  dynamic view userDecryptionSolana {
+    title 'Flow · User decryption (Solana)'
+    description 'RFC 036: permit → relayer → gateway → connector re-verifies → KMS core'
+    user -> zama.sdk 'signs ed25519 permit'
+    zama.sdk -> zama.relayer 'sends userDecrypt request'
+    zama.relayer -> zama.solHost 'pre-checks ACL, delegation, chain id'
+    zama.relayer -> zama.gateway 'submits userDecryptionRequest'
+    zama.kmsConnector -> zama.gateway 'observes request (gw-listener)'
+    zama.kmsConnector -> zama.solHost 'reads encrypted store + MMR peaks (kms-worker)'
+    zama.kmsConnector -> zama.coprocessor 'fetches allow-leaf proof'
+    zama.kmsConnector -> zama.kmsCore 'requests user decryption share'
+    zama.kmsConnector -> zama.gateway 'posts response bound to user key (tx-sender)'
+    zama.relayer -> zama.gateway 'collects responses'
+    zama.sdk -> zama.relayer 'polls result, verifies KMS signatures'
+    autoLayout TopBottom
+  }
+
+  dynamic view inputToComputeSolana {
+    title 'Flow · Encrypted input → FHE execution (Solana)'
+    // A program never acts on its own: the attestation comes back to the user, who sends it
+    // inside the application instruction; the program forwards it into the fhe_execute CPI.
+    user -> zama.sdk 'encrypts input, builds ZKPoK'
+    zama.sdk -> zama.relayer 'sends input proof'
+    zama.relayer -> zama.gateway 'submits verifyProofRequestSolana'
+    zama.coprocessor -> zama.gateway 'observes request (gw-listener)'
+    zama.coprocessor -> zama.gateway 'verifies ZKPoK, posts attestation (zkproof-worker, transaction-sender)'
+    zama.relayer -> zama.gateway 'collects coprocessor signatures'
+    zama.relayer -> zama.sdk 'returns handles, attestation'
+    user -> zama.confidentialToken 'signs, sends confidential_transfer tx carrying the attestation'
+    zama.confidentialToken -> zama.solHost 'CPI fhe_execute; the host re-verifies the attestation'
+    zama.coprocessor -> zama.solHost 'reads tx bytes, reconstructs execution + leaves (host-listener)'
+    zama.coprocessor -> zama.gateway 'computes, commits ciphertext (tfhe-worker, transaction-sender)'
+    autoLayout TopBottom
+  }
+  // EVM flows are not modelled yet: they need the same verification pass against
+  // tech-spec/architecture/flows before being drawn.
+}

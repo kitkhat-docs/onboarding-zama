@@ -1,0 +1,14 @@
+{
+  "name": "onboarding-zama",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "likec4 validate likec4",
+    "start": "likec4 start likec4",
+    "build": "npm run validate && likec4 build --base /onboarding-zama/diagrams/ --use-hash-history --title 'Zama protocol C4' -o dist/diagrams likec4 && node scripts/build-index.mjs"
+  },
+  "devDependencies": {
+    "likec4": "1.59.4",
+    "marked": "18.1.1"
+  }
+}

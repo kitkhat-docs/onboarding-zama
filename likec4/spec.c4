@@ -1,0 +1,60 @@
+// Zama Protocol — C4 model (LikeC4), v2 rewrite 2026-10-12.
+// Pins: fhevm feature/solana @ db2feb81f, tech-spec main, kms solana @ 294802eb.
+//
+// Modelling contract (see ../04-c4-model-contract.md):
+//   - The logical tree is strictly System > Container > Component. Nothing in between.
+//   - Container = one deployable unit: a contract set on one chain, a program, a service
+//     binary (or one crate's binaries with one responsibility), a database, a client bundle.
+//   - Component = one responsibility inside a container, 5-10 per container; file names
+//     go in the description, never in the title.
+//   - A library is a component of kind `library` inside every container that links it,
+//     tagged #shared when the same compiled code sits in more than one container.
+//   - Deployment boundaries (chains, nodes, parties) are not modelled: the external chain
+//     systems and the replicated-by-nature containers carry that in their descriptions
+//     (a deployment model was tried and dropped on 2026-10-13 as adding no understanding).
+//   - Two relationship kinds with one meaning on every level: `->` = calls (a request that
+//     changes state: tx, HTTPS, gRPC, CPI, in-process call); `-[reads]->` = read-only
+//     (chain reads, event observation, DB reads).
+//   - Views: one Context, one Containers, one Components view per container that has
+//     components, plus explicitly named Cross-cut and Flow views.
+
+specification {
+  element actor {
+    style { shape person }
+  }
+  element system
+
+  // ---- container kinds (level 2; kind is style only, level comes from nesting) ----
+  element container
+  element onchain {
+    notation 'Contract set or program on one chain'
+    style { color green }
+  }
+  element database {
+    style { shape storage }
+  }
+  element bundle {
+    notation 'Client-side bundle'
+    style { shape browser }
+  }
+
+  // ---- component kinds (level 3) ------------------------------------------------
+  element component
+  element library {
+    notation 'Library linked into the container'
+    style { color amber }
+  }
+
+  // ---- relationships --------------------------------------------------------------
+  relationship reads {
+    line dashed
+    color gray
+  }
+
+  // ---- tags -----------------------------------------------------------------------
+  tag external
+  tag shared    // same compiled code in more than one container
+  tag feature   // build variant, not in the production binary
+  tag evm
+  tag solana
+}

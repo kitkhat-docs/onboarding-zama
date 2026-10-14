@@ -1,0 +1,172 @@
+// Level 1 + 2: the system, its neighbours, and its containers.
+// Facts: fhevm/solana/README.md § Architecture, tech-spec/architecture/overview.md,
+// the Cargo manifests. "Decides" is the trust decision each container owns.
+// Links go to GitHub, pinned to the model's commit (fhevm db2feb81f, kms 294802eb, tech-spec main).
+
+model {
+
+  // ---- Persons ------------------------------------------------------------
+  user = actor 'User' 'Encrypts inputs, signs decryption requests (EIP-712 on EVM, ed25519 permit on Solana)'
+  dev = actor 'dApp developer' 'Writes a contract or program over encrypted types'
+  gov = actor 'Protocol governance' 'Registers participants and thresholds, can pause'
+  ops = actor 'Operator' 'Runs a coprocessor node or one KMS party'
+
+  // ---- External systems ---------------------------------------------------
+  evmChain = system 'Ethereum and EVM L2s' {
+    #external
+    description 'Ethereum (ground truth) and the EVM host chains'
+  }
+  solChain = system 'Solana cluster' {
+    #external
+    description 'Validators + an RPC node running the Yellowstone geyser plugin'
+  }
+  gwChain = system 'Gateway chain' {
+    #external
+    description 'Ethereum L3 that rolls up to Arbitrum'
+  }
+  keyStore = system 'Key material store' {
+    #external
+    description 'S3 bucket where KMS core publishes server keys / CRS'
+  }
+
+  // ---- The protocol ---------------------------------------------------------
+  zama = system 'Zama Protocol' {
+    description '
+      Confidential computation for smart contracts.
+      On-chain code executes symbolically (handles, never ciphertexts);
+      a threshold coprocessor cluster does FHE off-chain;
+      a threshold KMS decrypts only what the host chain ACL allows.
+    '
+    link https://github.com/zama-ai/tech-spec/blob/main/architecture/overview.md 'GitHub: tech-spec/architecture/overview.md'
+
+    // ---- Client ---------------------------------------------------------
+    sdk = bundle 'JS SDK' {
+      technology 'TypeScript, WASM TFHE'
+      description 'Encrypts inputs, signs requests, verifies KMS and coprocessor signatures client-side. Decides nothing on-chain.'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/sdk/js-sdk 'GitHub: fhevm/sdk/js-sdk'
+    }
+
+    // ---- Public edge ----------------------------------------------------
+    relayer = container 'Relayer' {
+      technology 'Rust, HTTPS, Postgres'
+      description 'The only public endpoint. Decides routing, fees and request shape; requests are user-signed so it cannot change who asks for what.'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/relayer 'GitHub: fhevm/relayer'
+    }
+
+    // ---- Host chains ----------------------------------------------------
+    evmHost = onchain 'Host contracts (EVM)' {
+      #evm
+      technology 'Solidity'
+      description 'Decides all on-chain authorization on its chain: ACL, input attestations, KMS signature checks, HCU budget. One deployment per EVM host chain.'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts 'GitHub: fhevm/host-contracts/contracts'
+    }
+    evmApps = onchain 'dApp contracts (EVM)' {
+      #evm
+      technology 'Solidity'
+      description 'Application logic over euint* types, written by third parties against library-solidity'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/library-solidity 'GitHub: fhevm/library-solidity'
+    }
+    solHost = onchain 'zama-host program (Solana)' {
+      #solana
+      technology 'Rust, SBF (Anchor, leaving it)'
+      description 'Same role as the EVM host contracts. Decides ACL/MMR, input attestation (threshold secp256k1), permits, public-decrypt certificates, HCU caps. No bridge on Solana.'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host 'GitHub: fhevm/solana/programs/zama-host'
+    }
+    confidentialToken = onchain 'confidential-token (Solana)' {
+      #solana
+      technology 'Rust, SBF'
+      description 'Reference application: confidential SPL-style token plus confidential-batcher. CPI into zama-host.'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/confidential-token 'GitHub: fhevm/solana/programs/confidential-token'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/confidential-batcher 'GitHub: fhevm/solana/programs/confidential-batcher'
+    }
+    solSpecimens = onchain 'Specimen programs (Solana)' {
+      #solana
+      technology 'Rust, SBF'
+      description 'delegator-vault, demo-vault, encrypted-counter, dep-chain: test and load specimens that CPI into zama-host'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs 'GitHub: fhevm/solana/programs'
+    }
+
+    // ---- Ethereum -------------------------------------------------------
+    protocolContracts = onchain 'Protocol contracts (Ethereum)' {
+      technology 'Solidity'
+      description 'Decides KMS node set, contexts/epochs, thresholds (ProtocolConfig) and key/CRS ceremonies (KMSGeneration); token, staking, governance. Deployed on Ethereum only.'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/ProtocolConfig.sol 'GitHub: fhevm/host-contracts/contracts/ProtocolConfig.sol'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/KMSGeneration.sol 'GitHub: fhevm/host-contracts/contracts/KMSGeneration.sol'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/protocol-contracts/contracts 'GitHub: fhevm/protocol-contracts/contracts'
+    }
+
+    // ---- Gateway --------------------------------------------------------
+    gateway = onchain 'Gateway contracts' {
+      technology 'Solidity'
+      description 'Decides request lifecycle, fees and the participant registry (GatewayConfig mirrors ProtocolConfig).'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/gateway-contracts/contracts 'GitHub: fhevm/gateway-contracts/contracts'
+    }
+
+    // ---- Coprocessor (decides nothing) ----------------------------------
+    coprocessor = container 'Coprocessor' {
+      technology 'Rust, GPU optional; one cargo workspace, several binaries, one Postgres'
+      description 'Observes host chains and extends their execution off-chain. Binaries: host-listener (EVM poller / consumer, solana_host_listener, solana_leaf_proof_server), gw-listener (Gateway ZKPoK requests), scheduler + tfhe-worker + sns-worker + zkproof-worker (compute), consensus-detector (ct64 quorum check), transaction-sender (commits and ZKPoK responses to the Gateway, never to a host chain). A wrong fork wastes compute but cannot release plaintext.'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine 'GitHub: fhevm/coprocessor/fhevm-engine'
+    }
+
+    // ---- KMS party (connector + core) -----------------------------------
+    kmsConnector = container 'KMS connector' {
+      technology 'Rust; one cargo workspace, several binaries, one Postgres'
+      description 'Decides decrypt authorization: independently re-verifies the user signature and the host-chain ACL before asking KMS core. Binaries: gw-listener (Gateway decryption events → DB), kms-worker (the authorization pipeline and the gRPC client of KMS core), tx-sender (KMS responses → Gateway transactions), endpoint + proxy (HTTP path for user-decrypt requests per RFC 033; no caller in this workspace at this pin, the relayer still goes through the Gateway).'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/kms-connector/crates 'GitHub: fhevm/kms-connector/crates'
+      link https://github.com/zama-ai/tech-spec/blob/main/rfcs/033-kms-connector-http-endpoint.md 'GitHub: tech-spec/rfcs/033-kms-connector-http-endpoint.md'
+    }
+    kmsCore = container 'KMS core' {
+      technology 'Rust, gRPC'
+      description 'Chain-blind threshold MPC: keygen, decryption, resharing.'
+      link https://github.com/zama-ai/kms/tree/294802eb9291ca5e1841f97c4f5b0d73a61f25bf/core/service 'GitHub: kms/core/service'
+    }
+
+    // ---- Container relationships ------------------------------------------
+    // Edge titles are always "verb + object" with the source as the subject;
+    // the second string is the technology. likec4 merges every relationship between
+    // the same pair into one edge and labels it "[...]" when titles differ, so a pair
+    // that both reads and writes is one `->` relationship listing both actions.
+    sdk -> relayer 'sends encrypt / decrypt requests' 'HTTPS'
+    sdk -[reads]-> evmHost 'reads signer sets, contract versions'
+    sdk -> solHost 'reads host config, encrypted stores; sends revoke_permits' 'RPC, tx'
+
+    relayer -> gateway 'submits requests, collects responses' 'tx, RPC'
+    relayer -[reads]-> evmHost 'pre-checks ACL'
+    relayer -[reads]-> solHost 'pre-checks ACL, stores, delegations'
+    relayer -[reads]-> protocolContracts 'polls key URLs'
+
+    evmApps -> evmHost 'calls FHE ops, grants ACL'
+    evmHost -[reads]-> protocolContracts 'mirrors KMS context, thresholds'
+    confidentialToken -> solHost 'creates stores, runs fhe_execute, seals handles' 'CPI'
+    solSpecimens -> solHost 'runs fhe_execute, delegates decryption' 'CPI'
+
+    coprocessor -[reads]-> evmHost 'polls FHEEvents, ACLEvents'
+    coprocessor -[reads]-> protocolContracts 'listens to ProtocolConfig, KMSGeneration events'
+    coprocessor -[reads]-> solHost 'streams tx bytes' 'Yellowstone gRPC'
+    coprocessor -[reads]-> keyStore 'downloads server keys on activation'
+    coprocessor -> gateway 'listens to ZKPoK requests; posts commits, ZKPoK responses' 'tx'
+
+    kmsConnector -> gateway 'listens to decryption events; posts decryption responses' 'tx'
+    kmsConnector -[reads]-> evmHost 'checks ACL'
+    kmsConnector -[reads]-> solHost 'reads encrypted stores, MMR peaks'
+    kmsConnector -> coprocessor 'fetches leaf proofs' 'HTTP'
+    kmsConnector -> kmsCore 'requests decrypt / keygen' 'gRPC'
+    kmsCore -> keyStore 'publishes keys'
+  }
+
+  // ---- Person and external relationships ---------------------------------
+  user -> zama.sdk 'encrypts inputs, signs requests'
+  dev -> zama.evmApps 'deploys'
+  dev -> zama.confidentialToken 'deploys'
+  gov -> zama.protocolContracts 'configures'
+  gov -> zama.gateway 'registers participants'
+  ops -> zama.coprocessor 'operates a coprocessor node'
+  ops -> zama.kmsCore 'operates a KMS party'
+
+  zama.coprocessor -[reads]-> solChain 'subscribes to transactions' 'Yellowstone gRPC'
+  zama.coprocessor -[reads]-> evmChain 'polls blocks' 'RPC'
+  zama.relayer -> gwChain 'sends transactions'
+  zama.coprocessor -> gwChain 'sends transactions'
+  zama.kmsConnector -> gwChain 'sends transactions'
+}

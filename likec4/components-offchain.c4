@@ -1,0 +1,330 @@
+// Level 3 for the off-chain containers, the client bundle, and the two chain-side
+// registries (Gateway, Protocol contracts). Components are responsibilities; libraries
+// linked into the container are `library` components, #shared when the same code sits
+// in another container too.
+
+model {
+
+  // ======================================================================
+  extend zama.sdk {
+    core = component 'core' {
+      description 'Chain-agnostic: handle codec, KMS / coprocessor verifiers, encryption-key fetch & cache, host-contract readers, runtime, actions, client decorators'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/sdk/js-sdk/src/core 'GitHub: fhevm/sdk/js-sdk/src/core'
+    }
+    wasm = component 'wasm' {
+      description 'TFHE and TKMS WASM modules and their loader'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/sdk/js-sdk/src/wasm 'GitHub: fhevm/sdk/js-sdk/src/wasm'
+    }
+    evmAdapters = component 'ethers / viem' {
+      description 'EVM adapters with the same API: clients, runtime, cleartext clients'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/sdk/js-sdk/src/ethers 'GitHub: fhevm/sdk/js-sdk/src/ethers'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/sdk/js-sdk/src/viem 'GitHub: fhevm/sdk/js-sdk/src/viem'
+    }
+    solana = component 'solana' {
+      description 'host, encryptedStore, transientStore, permit, userDecrypt, encryptionKeyCache; actions (encryptInput, submitInputProof, decryptPublicValue, publicDecryptCertificate, revokePermits); createFhevm*Client; cleartext clients; generated program clients'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/sdk/js-sdk/src/solana 'GitHub: fhevm/sdk/js-sdk/src/solana'
+    }
+    core -> wasm 'loads'
+    evmAdapters -> core 'binds chain clients to'
+    solana -> core 'binds chain clients to'
+  }
+
+  // ======================================================================
+  extend zama.relayer {
+    api = component 'HTTP API' {
+      description 'http/: endpoints v2 / v3, admin, middleware, OpenAPI, user-decrypt wait'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/relayer/src/http 'GitHub: fhevm/relayer/src/http'
+    }
+    model = component 'Request model' {
+      description 'core/: input_proof_request, public_decrypt_request, user_decrypt_request, event, job_id'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/relayer/src/core 'GitHub: fhevm/relayer/src/core'
+    }
+    persistence = component 'Persistence & dispatch' {
+      technology 'Postgres'
+      description 'store/sql holds request state and the dispatch cursor; sweep.rs is the only Postgres → dispatch path; startup_recovery re-dispatches incomplete requests. The relayer is the only client of its database.'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/relayer/src/sweep.rs 'GitHub: fhevm/relayer/src/sweep.rs'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/relayer/src/store/sql 'GitHub: fhevm/relayer/src/store/sql'
+    }
+    orchestrator = component 'Orchestrator' {
+      description 'orchestrator/: request lifecycle, task manager, retries, dispatcher lock'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/relayer/src/orchestrator 'GitHub: fhevm/relayer/src/orchestrator'
+    }
+    hostChecks = component 'Host pre-checks' {
+      description 'host/: acl_checker, signature_prechecker, chain_id_validator, solana_delegation_precheck, threshold_resolver; keyurl_poller keeps /v2/keyurl in sync with ProtocolConfig / KMSGeneration'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/relayer/src/host 'GitHub: fhevm/relayer/src/host'
+    }
+    gwSubmit = component 'Gateway submission' {
+      description 'gateway/: input, public-decrypt, user-decrypt handlers; throttlers'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/relayer/src/gateway 'GitHub: fhevm/relayer/src/gateway'
+    }
+    gwWatch = component 'Gateway listener' {
+      description 'gateway/arbitrum listener + bindings; handled_events (dedup, completion, cursor); ciphertext_checker (readiness)'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/relayer/src/gateway/arbitrum 'GitHub: fhevm/relayer/src/gateway/arbitrum'
+    }
+    aclLib = library 'zama-solana-acl' {
+      #shared
+      description 'Encrypted value account and delegation record decoders'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-acl 'GitHub: fhevm/solana/crates/zama-solana-acl'
+    }
+    permitLib = library 'zama-solana-permit' {
+      #shared
+      description 'Permit layout and strict typed decode'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-permit 'GitHub: fhevm/solana/crates/zama-solana-permit'
+    }
+    requestLib = library 'zama-solana-request' {
+      #shared
+      description 'Canonical solanaRequest serialization forwarded into Gateway calldata'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-request 'GitHub: fhevm/solana/crates/zama-solana-request'
+    }
+    udsLib = library 'user-decryption-signature' {
+      #shared
+      description 'EVM user-decrypt signature verification shared with the connector'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/shared/user-decryption-signature 'GitHub: fhevm/shared/user-decryption-signature'
+    }
+    attLib = library 'ciphertext-attestation' {
+      #shared
+      description 'Off-chain coprocessor attestation consensus behind the ciphertext readiness check'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/shared/ciphertext-attestation 'GitHub: fhevm/shared/ciphertext-attestation'
+    }
+    hostBindings = library 'fhevm_host_bindings' {
+      #shared
+      description 'alloy bindings of the EVM host contracts'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/rust_bindings 'GitHub: fhevm/host-contracts/rust_bindings'
+    }
+
+    api -> persistence 'persists request'
+    persistence -> orchestrator 'dispatches'
+    orchestrator -> hostChecks 'pre-validates'
+    orchestrator -> gwSubmit 'submits'
+    gwWatch -> persistence 'completes'
+    hostChecks -> aclLib 'decodes stores, delegations'
+    hostChecks -> permitLib 'decodes permits'
+    hostChecks -> udsLib 'pre-checks EVM user signatures'
+    hostChecks -> hostBindings 'reads EVM host contracts'
+    gwWatch -> attLib 'checks ciphertext readiness'
+    api -> requestLib 'serializes solanaRequest'
+  }
+
+  // ======================================================================
+  // One component per binary or per responsibility inside host-listener; the
+  // handoffs between binaries go through the Coprocessor DB, labelled as such.
+  extend zama.coprocessor {
+    evmIngest = component 'EVM ingestion' {
+      description 'host-listener poller/ + consumer/: zero-event-loss ingestion of FHEEvents / ACLEvents; cmd/block_history detects host-chain reorgs'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/host-listener/src/poller 'GitHub: fhevm/coprocessor/fhevm-engine/host-listener/src/poller'
+    }
+    solIngest = component 'Solana ingestion' {
+      description 'host-listener solana_grpc_source.rs + solana_grpc_listener.rs: Yellowstone gRPC subscription, ordering, watermark, fork handling; parses tx bytes'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/host-listener/src/solana_grpc_listener.rs 'GitHub: fhevm/coprocessor/fhevm-engine/host-listener/src/solana_grpc_listener.rs'
+    }
+    solReconstruct = component 'Solana reconstruction' {
+      description 'host-listener solana_reconstruct.rs + solana_adapter.rs: re-derives executions and MMR leaves from tx bytes with the program own derivation code, maps them onto the DB schema'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/host-listener/src/solana_reconstruct.rs 'GitHub: fhevm/coprocessor/fhevm-engine/host-listener/src/solana_reconstruct.rs'
+    }
+    protoCfg = component 'ProtocolConfig & key activation' {
+      description 'host-listener protocol_config/ + kms_generation/: ProtocolConfig emitter subscription; on KMSGeneration activation downloads server keys from S3 (XOF keyset / ServerKey) and records them'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/host-listener/src/kms_generation 'GitHub: fhevm/coprocessor/fhevm-engine/host-listener/src/kms_generation'
+    }
+    dbWriter = component 'DB writer' {
+      description 'host-listener database/: ingest, dependence_chains, tfhe_event_propagate, solana_leaves, computation'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/host-listener/src/database 'GitHub: fhevm/coprocessor/fhevm-engine/host-listener/src/database'
+    }
+    leafProof = component 'Leaf-proof server' {
+      description 'host-listener http_server.rs + bin/solana_leaf_proof_server: serves MMR leaf proofs over HTTP to the KMS connector (DD-064)'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/host-listener/src/http_server.rs 'GitHub: fhevm/coprocessor/fhevm-engine/host-listener/src/http_server.rs'
+    }
+    gwListener = component 'Gateway listener' {
+      description 'gw-listener binary: watches the Gateway for ZKPoK verification requests and queues them'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/gw-listener 'GitHub: fhevm/coprocessor/fhevm-engine/gw-listener'
+    }
+    workers = component 'FHE workers' {
+      technology 'GPU optional'
+      description 'scheduler, tfhe-worker, sns-worker, zkproof-worker: FHE operations, switch-and-squash, ZKPoK verification. One component because the crates differ by workload, not by role.'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/tfhe-worker 'GitHub: fhevm/coprocessor/fhevm-engine/tfhe-worker'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/scheduler 'GitHub: fhevm/coprocessor/fhevm-engine/scheduler'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/sns-worker 'GitHub: fhevm/coprocessor/fhevm-engine/sns-worker'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/zkproof-worker 'GitHub: fhevm/coprocessor/fhevm-engine/zkproof-worker'
+    }
+    consensus = component 'Consensus detector' {
+      description 'consensus-detector binary: compares local ct64 against the attestation quorum published by other coprocessors on S3; heals contaminated ciphertexts locally'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/consensus-detector 'GitHub: fhevm/coprocessor/fhevm-engine/consensus-detector'
+    }
+    txSender = component 'Transaction sender' {
+      description 'transaction-sender binary: posts ciphertext commits (add_ciphertext) and ZKPoK verification responses (verify_proof) to the Gateway. Never writes to a host chain.'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/transaction-sender 'GitHub: fhevm/coprocessor/fhevm-engine/transaction-sender'
+    }
+    db = database 'Coprocessor DB' {
+      technology 'Postgres'
+      description 'Work queue, ciphertexts, MMR leaf record: the bus between the binaries; no client outside this container'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/coprocessor/fhevm-engine/db-migration 'GitHub: fhevm/coprocessor/fhevm-engine/db-migration'
+    }
+    aclLib = library 'zama-solana-acl' {
+      #shared
+      description 'Same leaf / proof code as the program'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-acl 'GitHub: fhevm/solana/crates/zama-solana-acl'
+    }
+    txLib = library 'zama-solana-transaction' {
+      description 'Transaction-byte parsing for reconstruction'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-transaction 'GitHub: fhevm/solana/crates/zama-solana-transaction'
+    }
+    hostDecode = library 'zama-host (decode feature)' {
+      #shared
+      description 'The host program crate compiled off-chain for instruction / event decoding'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/solana/programs/zama-host/src/decode.rs 'GitHub: fhevm/solana/programs/zama-host/src/decode.rs'
+    }
+    attLib = library 'ciphertext-attestation' {
+      #shared
+      description 'Attestation consensus linked by sns-worker and consensus-detector; the same crate the relayer and the connector use'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/shared/ciphertext-attestation 'GitHub: fhevm/shared/ciphertext-attestation'
+    }
+
+    solIngest -> solReconstruct 'hands ordered tx bytes'
+    solReconstruct -> dbWriter 'hands executions, MMR leaves'
+    evmIngest -> dbWriter 'hands decoded events'
+    protoCfg -> dbWriter 'hands config, activated keys'
+    dbWriter -> db 'writes work items, MMR leaf record'
+    leafProof -[reads]-> db 'reads leaf record'
+    gwListener -> db 'enqueues ZKPoK requests'
+    workers -> db 'consumes queue, stores ciphertexts'
+    txSender -[reads]-> db 'reads results to post'
+    consensus -[reads]-> db 'reads local ct64'
+    solIngest -> txLib 'parses tx bytes'
+    solReconstruct -> aclLib 're-derives allow leaves'
+    solReconstruct -> hostDecode 'decodes instructions, events'
+    workers -> attLib 'builds attestations'
+    consensus -> attLib 'checks attestation quorum'
+  }
+
+  // ======================================================================
+  // One component per binary or per responsibility inside kms-worker; the HTTP
+  // endpoint / proxy crates are described on the container, not modelled.
+  extend zama.kmsConnector {
+    gwListener = component 'Gateway listener' {
+      description 'gw-listener binary: Gateway decryption events → connector DB'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/kms-connector/crates/gw-listener 'GitHub: fhevm/kms-connector/crates/gw-listener'
+    }
+    picker = component 'Event picker' {
+      description 'kms-worker core/event_picker: takes requests from the connector DB'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/kms-connector/crates/kms-worker/src/core/event_picker 'GitHub: fhevm/kms-connector/crates/kms-worker/src/core/event_picker'
+    }
+    processor = component 'Event processor' {
+      description 'kms-worker core/event_processor: EVM path — user signature re-check, host ACL read, gRPC to KMS core'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/kms-connector/crates/kms-worker/src/core/event_processor 'GitHub: fhevm/kms-connector/crates/kms-worker/src/core/event_processor'
+    }
+    solPipeline = component 'Solana authorization pipeline' {
+      description 'kms-worker core/solana/: delegation, encrypted_store, handle_binding, snapshot, watermark, proof, verifier, public_decrypt'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/kms-connector/crates/kms-worker/src/core/solana 'GitHub: fhevm/kms-connector/crates/kms-worker/src/core/solana'
+    }
+    publisher = component 'KMS response publisher' {
+      description 'kms-worker core/kms_response_publisher: KMS core responses → connector DB'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/kms-connector/crates/kms-worker/src/core/kms_response_publisher.rs 'GitHub: fhevm/kms-connector/crates/kms-worker/src/core/kms_response_publisher.rs'
+    }
+    txSender = component 'Transaction sender' {
+      description 'tx-sender binary: KMS responses → Gateway transactions'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/kms-connector/crates/tx-sender 'GitHub: fhevm/kms-connector/crates/tx-sender'
+    }
+    db = database 'Connector DB' {
+      technology 'Postgres'
+      description 'Request state shared by the connector binaries; no client outside this container'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/kms-connector/connector-db 'GitHub: fhevm/kms-connector/connector-db'
+    }
+    aclLib = library 'zama-solana-acl' {
+      #shared
+      description 'Verifies the leaf proof against live on-chain peaks'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-acl 'GitHub: fhevm/solana/crates/zama-solana-acl'
+    }
+    permitLib = library 'zama-solana-permit' {
+      #shared
+      description 'Permit layout and signature verification'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-permit 'GitHub: fhevm/solana/crates/zama-solana-permit'
+    }
+    requestLib = library 'zama-solana-request' {
+      #shared
+      description 'User-decryption request wire format'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/solana/crates/zama-solana-request 'GitHub: fhevm/solana/crates/zama-solana-request'
+    }
+    udsLib = library 'user-decryption-signature' {
+      #shared
+      description 'EVM user-decrypt signature verification shared with the relayer'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/shared/user-decryption-signature 'GitHub: fhevm/shared/user-decryption-signature'
+    }
+    attLib = library 'ciphertext-attestation' {
+      #shared
+      description 'Coprocessor attestation consensus'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/shared/ciphertext-attestation 'GitHub: fhevm/shared/ciphertext-attestation'
+    }
+    hostBindings = library 'fhevm_host_bindings' {
+      #shared
+      description 'alloy bindings of the EVM host contracts'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/rust_bindings 'GitHub: fhevm/host-contracts/rust_bindings'
+    }
+
+    gwListener -> db 'stores decryption events'
+    picker -[reads]-> db 'picks pending requests'
+    picker -> processor 'hands picked requests'
+    processor -> solPipeline 'routes Solana requests'
+    processor -> publisher 'hands KMS results'
+    publisher -> db 'stores KMS responses'
+    txSender -[reads]-> db 'reads responses to post'
+    processor -> udsLib 're-checks EVM user signatures'
+    processor -> hostBindings 'reads EVM host ACL'
+    processor -> attLib 'checks ciphertext attestations'
+    solPipeline -> aclLib 'verifies leaf proofs'
+    solPipeline -> permitLib 'verifies permits'
+    solPipeline -> requestLib 'decodes requests'
+  }
+
+  // ======================================================================
+
+  // ======================================================================
+  extend zama.gateway {
+    decryption = component 'Decryption' {
+      description 'Public and user decryption request / response lifecycle'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/gateway-contracts/contracts/Decryption.sol 'GitHub: fhevm/gateway-contracts/contracts/Decryption.sol'
+    }
+    inputVerification = component 'InputVerification' {
+      description 'ZKPoK verification consensus (verifyProofRequest / verifyProofRequestSolana)'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/gateway-contracts/contracts/InputVerification.sol 'GitHub: fhevm/gateway-contracts/contracts/InputVerification.sol'
+    }
+    gatewayConfig = component 'GatewayConfig' {
+      description 'Registry: KMS nodes, coprocessors, host chains, thresholds'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/gateway-contracts/contracts/GatewayConfig.sol 'GitHub: fhevm/gateway-contracts/contracts/GatewayConfig.sol'
+    }
+    ciphertextCommits = component 'CiphertextCommits' {
+      description 'Ciphertext digests committed by coprocessors'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/gateway-contracts/contracts/CiphertextCommits.sol 'GitHub: fhevm/gateway-contracts/contracts/CiphertextCommits.sol'
+    }
+    protocolPayment = component 'ProtocolPayment' {
+      description 'Fee collection'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/gateway-contracts/contracts/ProtocolPayment.sol 'GitHub: fhevm/gateway-contracts/contracts/ProtocolPayment.sol'
+    }
+    pauserSet = component 'PauserSet' {
+      description 'Emergency pause (immutable/)'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/gateway-contracts/contracts/immutable/PauserSet.sol 'GitHub: fhevm/gateway-contracts/contracts/immutable/PauserSet.sol'
+    }
+    kmsGeneration = component 'KMSGeneration (view-only)' {
+      description 'Kept deployed for historical queries after the move to Ethereum; no state-changing functions'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/gateway-contracts/contracts/KMSGeneration.sol 'GitHub: fhevm/gateway-contracts/contracts/KMSGeneration.sol'
+    }
+    decryption -> gatewayConfig 'reads thresholds'
+    decryption -> protocolPayment 'charges'
+    inputVerification -> gatewayConfig 'reads coprocessor set'
+  }
+
+  // ======================================================================
+  extend zama.protocolContracts {
+    protocolConfig = component 'ProtocolConfig' {
+      description 'KMS node metadata, contexts, signer sets, thresholds'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/ProtocolConfig.sol 'GitHub: fhevm/host-contracts/contracts/ProtocolConfig.sol'
+    }
+    kmsGeneration = component 'KMSGeneration' {
+      description 'Key / CRS generation orchestration; reads ProtocolConfig'
+      link https://github.com/zama-ai/fhevm/blob/db2feb81f745a27537a65290f35e3d14c58d8251/host-contracts/contracts/KMSGeneration.sol 'GitHub: fhevm/host-contracts/contracts/KMSGeneration.sol'
+    }
+    token = component 'Token, staking, governance' {
+      description 'protocol-contracts/: token, staking, governance, feesBurner, solanaOFT, PauserSetWrapper'
+      link https://github.com/zama-ai/fhevm/tree/db2feb81f745a27537a65290f35e3d14c58d8251/protocol-contracts/contracts 'GitHub: fhevm/protocol-contracts/contracts'
+    }
+    kmsGeneration -> protocolConfig 'reads node set, thresholds'
+  }
+}
